@@ -123,33 +123,22 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', message: 'MD Collab API is running' });
 });
 
-// Serve static files from frontend build in production
-if (process.env.NODE_ENV === 'production') {
-    // Serve static files from the frontend dist folder
-    app.use(express.static(path.join(__dirname, '../frontend/dist')));
-
-    // Handle React routing - send all non-API requests to index.html
-    app.get('*', (req, res) => {
-        res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
+// Root route - API info
+app.get('/', (req, res) => {
+    res.json({
+        message: 'MD Collab API',
+        status: 'running',
+        endpoints: {
+            health: '/api/health',
+            auth: '/api/auth',
+            files: '/api/files',
+            folders: '/api/folders',
+            edits: '/api/edits',
+            users: '/api/users',
+            notifications: '/api/notifications'
+        }
     });
-} else {
-    // Root route for development
-    app.get('/', (req, res) => {
-        res.json({
-            message: 'MD Collab API',
-            status: 'running',
-            endpoints: {
-                health: '/api/health',
-                auth: '/api/auth',
-                files: '/api/files',
-                folders: '/api/folders',
-                edits: '/api/edits',
-                users: '/api/users',
-                notifications: '/api/notifications'
-            }
-        });
-    });
-}
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {
