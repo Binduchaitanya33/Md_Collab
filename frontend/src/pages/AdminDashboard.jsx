@@ -19,7 +19,7 @@ import {
     UserCog,
     Save
 } from 'lucide-react';
-import axios from 'axios';
+import axios from '../config/axiosConfig';
 import DiffViewer from '../components/DiffViewer';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 
@@ -101,9 +101,9 @@ export default function AdminDashboard() {
     const fetchData = async () => {
         try {
             const [editsRes, usersRes, filesRes] = await Promise.all([
-                axios.get('https://md-collab-1.onrender.com/api/edits/all'),
-                axios.get('https://md-collab-1.onrender.com/api/users'),
-                axios.get('https://md-collab-1.onrender.com/api/files')
+                axios.get('/api/edits/all'),
+                axios.get('/api/users'),
+                axios.get('/api/files')
             ]);
             const allEditsData = editsRes.data || [];
             setPendingEdits(allEditsData.filter(e => e.status === 'pending'));
@@ -127,7 +127,7 @@ export default function AdminDashboard() {
     const handleApprove = async (editId) => {
         setProcessing(editId);
         try {
-            await axios.post(`https://md-collab-1.onrender.com/api/edits/${editId}/approve`);
+            await axios.post(`/api/edits/${editId}/approve`);
             setNotification({ type: 'success', message: 'Edit approved and applied to file!' });
             fetchData();
         } catch (error) {
@@ -144,7 +144,7 @@ export default function AdminDashboard() {
     const handleReject = async (editId, notes = '') => {
         setProcessing(editId);
         try {
-            await axios.post(`https://md-collab-1.onrender.com/api/edits/${editId}/reject`, { notes });
+            await axios.post(`/api/edits/${editId}/reject`, { notes });
             setNotification({ type: 'info', message: 'Edit rejected.' });
             fetchData();
         } catch (error) {
@@ -188,7 +188,7 @@ export default function AdminDashboard() {
     const saveUserChanges = async (userId) => {
         setUserProcessing(userId);
         try {
-            await axios.put(`https://md-collab-1.onrender.com/api/users/${userId}`, editUserData);
+            await axios.put(`/api/users/${userId}`, editUserData);
             setNotification({ type: 'success', message: 'User updated successfully!' });
             fetchData();
         } catch (error) {
@@ -205,7 +205,7 @@ export default function AdminDashboard() {
     const deleteUser = async (userId) => {
         setUserProcessing(userId);
         try {
-            await axios.delete(`https://md-collab-1.onrender.com/api/users/${userId}`);
+            await axios.delete(`/api/users/${userId}`);
             setNotification({ type: 'success', message: 'User deleted successfully!' });
             fetchData();
         } catch (error) {

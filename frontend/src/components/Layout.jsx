@@ -32,7 +32,7 @@ export default function Layout({ children }) {
     return (
         <div className="min-h-screen bg-gray-50">
             {/* Top Navigation */}
-            <nav className="bg-white shadow-sm border-b border-gray-200">
+            <nav className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex justify-between h-16">
                         <div className="flex items-center">
@@ -135,7 +135,7 @@ export default function Layout({ children }) {
             </nav>
 
             {/* Main Content */}
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
                 {children}
             </main>
         </div>

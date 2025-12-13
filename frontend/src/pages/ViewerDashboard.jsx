@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { FileText, Search, Eye, Clock, User, AlertCircle } from 'lucide-react';
-import axios from 'axios';
+import axios from '../config/axiosConfig';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 
 export default function ViewerDashboard() {
@@ -16,7 +16,7 @@ export default function ViewerDashboard() {
 
     const fetchFiles = async () => {
         try {
-            const response = await axios.get('https://md-collab-1.onrender.com/api/files');
+            const response = await axios.get('/api/files');
             setFiles(response.data);
             setBackendConnected(true);
         } catch (error) {

@@ -1,15 +1,20 @@
 import express from 'express';
 import File from '../models/File.js';
+import Edit from '../models/Edit.js';
+import Notification from '../models/Notification.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Get all approved files (accessible to all authenticated users)
+/* =========================================================
+   GET ALL APPROVED FILES (All authenticated users)
+========================================================= */
 router.get('/', authenticate, async (req, res) => {
     try {
         const files = await File.find({ status: 'approved' })
             .populate('author', 'name email')
             .sort({ updatedAt: -1 });
+
         res.json(files);
     } catch (error) {
         console.error('Error fetching files:', error);
@@ -17,7 +22,26 @@ router.get('/', authenticate, async (req, res) => {
     }
 });
 
-// Get single file
+/* =========================================================
+   GET FILES CREATED BY CURRENT USER
+   IMPORTANT: must be before "/:id"
+========================================================= */
+router.get('/my/files', authenticate, async (req, res) => {
+    try {
+        const files = await File.find({ author: req.user._id })
+            .populate('author', 'name email')
+            .sort({ updatedAt: -1 });
+
+        res.json(files);
+    } catch (error) {
+        console.error('Error fetching my files:', error);
+        res.status(500).json({ message: 'Failed to fetch files' });
+    }
+});
+
+/* =========================================================
+   GET SINGLE FILE
+========================================================= */
 router.get('/:id', authenticate, async (req, res) => {
     try {
         const file = await File.findById(req.params.id)
@@ -34,7 +58,9 @@ router.get('/:id', authenticate, async (req, res) => {
     }
 });
 
-// Create new file (editor and admin only)
+/* =========================================================
+   CREATE NEW FILE (Editor & Admin)
+========================================================= */
 router.post('/', authenticate, authorize('editor', 'admin'), async (req, res) => {
     try {
         const { name, content } = req.body;
@@ -43,11 +69,13 @@ router.post('/', authenticate, authorize('editor', 'admin'), async (req, res) =>
             name,
             content,
             author: req.user._id,
-            status: req.user.role === 'admin' ? 'approved' : 'approved', // Direct creation is approved
-            versions: [{
-                content,
-                updatedBy: req.user._id
-            }]
+            status: 'approved',
+            versions: [
+                {
+                    content,
+                    updatedBy: req.user._id
+                }
+            ]
         });
 
         await file.save();
@@ -60,7 +88,9 @@ router.post('/', authenticate, authorize('editor', 'admin'), async (req, res) =>
     }
 });
 
-// Update file directly (admin only)
+/* =========================================================
+   UPDATE FILE DIRECTLY (Admin Only)
+========================================================= */
 router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
     try {
         const { content } = req.body;
@@ -70,7 +100,6 @@ router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
             return res.status(404).json({ message: 'File not found' });
         }
 
-        // Add current version to history
         file.versions.push({
             content: file.content,
             updatedBy: req.user._id
@@ -87,7 +116,9 @@ router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
     }
 });
 
-// Save/update own file (editor can save their own files)
+/* =========================================================
+   SAVE / UPDATE OWN FILE (Editor & Admin)
+========================================================= */
 router.put('/:id/save', authenticate, authorize('editor', 'admin'), async (req, res) => {
     try {
         const { content, name } = req.body;
@@ -97,12 +128,10 @@ router.put('/:id/save', authenticate, authorize('editor', 'admin'), async (req, 
             return res.status(404).json({ message: 'File not found' });
         }
 
-        // Check if user is the author or admin
         if (file.author.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
             return res.status(403).json({ message: 'You can only save your own files' });
         }
 
-        // Add current version to history
         file.versions.push({
             content: file.content,
             updatedBy: req.user._id
@@ -110,6 +139,7 @@ router.put('/:id/save', authenticate, authorize('editor', 'admin'), async (req, 
 
         file.content = content;
         if (name) file.name = name;
+
         await file.save();
         await file.populate('author', 'name email');
 
@@ -120,26 +150,25 @@ router.put('/:id/save', authenticate, authorize('editor', 'admin'), async (req, 
     }
 });
 
-// Get files created by current user
-router.get('/my/files', authenticate, async (req, res) => {
+/* =========================================================
+   DELETE FILE
+   Admin: delete any
+   Editor: delete any
+========================================================= */
+router.delete('/:id', authenticate, authorize('editor', 'admin'), async (req, res) => {
     try {
-        const files = await File.find({ author: req.user._id })
-            .populate('author', 'name email')
-            .sort({ updatedAt: -1 });
-        res.json(files);
-    } catch (error) {
-        console.error('Error fetching my files:', error);
-        res.status(500).json({ message: 'Failed to fetch files' });
-    }
-});
-
-// Delete file (admin only)
-router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
-    try {
-        const file = await File.findByIdAndDelete(req.params.id);
+        const file = await File.findById(req.params.id);
         if (!file) {
             return res.status(404).json({ message: 'File not found' });
         }
+
+        await Promise.all([
+            Edit.deleteMany({ file: req.params.id }),
+            Notification.deleteMany({ fileId: req.params.id })
+        ]);
+
+        await File.findByIdAndDelete(req.params.id);
+
         res.json({ message: 'File deleted successfully' });
     } catch (error) {
         console.error('Error deleting file:', error);

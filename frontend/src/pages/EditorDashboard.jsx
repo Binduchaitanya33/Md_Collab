@@ -14,14 +14,17 @@ import {
     FolderOpen,
     Download,
     RefreshCw,
-    File
+    File,
+    Trash2
 } from 'lucide-react';
-import axios from 'axios';
+import axios from '../config/axiosConfig';
+import { useAuth } from '../context/AuthContext';
 import DiffViewer from '../components/DiffViewer';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import SyncScrollEditor from '../components/SyncScrollEditor';
 
 export default function EditorDashboard() {
+    const { user } = useAuth();
     const [files, setFiles] = useState([]);
     const [myFiles, setMyFiles] = useState([]);
     const [myEdits, setMyEdits] = useState([]);
@@ -38,10 +41,15 @@ export default function EditorDashboard() {
     const [showDiff, setShowDiff] = useState(false);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [sendingForApproval, setSendingForApproval] = useState(false);
     const [saveStatus, setSaveStatus] = useState(null); // 'saved', 'saving', 'error'
     const [activeTab, setActiveTab] = useState('myfiles');
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [backendConnected, setBackendConnected] = useState(true);
+
+    // Delete modal state
+    const [deleteModal, setDeleteModal] = useState({ isOpen: false, file: null, isFromEditor: false });
+    const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', type: 'success' });
 
     useEffect(() => {
         fetchData();
@@ -50,9 +58,9 @@ export default function EditorDashboard() {
     const fetchData = async () => {
         try {
             const [filesRes, myFilesRes, editsRes] = await Promise.all([
-                axios.get('https://md-collab-1.onrender.com/api/files'),
-                axios.get('https://md-collab-1.onrender.com/api/files/my/files'),
-                axios.get('https://md-collab-1.onrender.com/api/edits/my')
+                axios.get('/api/files'),
+                axios.get('/api/files/my/files'),
+                axios.get('/api/edits/my')
             ]);
             setFiles(filesRes.data);
             setMyFiles(myFilesRes.data);
@@ -118,7 +126,7 @@ export default function EditorDashboard() {
         setSaveStatus('saving');
 
         try {
-            const response = await axios.put(`https://md-collab-1.onrender.com/api/files/${currentFileId}/save`, {
+            const response = await axios.put(`/api/files/${currentFileId}/save`, {
                 content: editContent,
                 name: editFileName
             });
@@ -152,8 +160,11 @@ export default function EditorDashboard() {
     };
 
     const handleSendForApproval = async () => {
+        if (sendingForApproval) return; // Prevent multiple clicks
+
+        setSendingForApproval(true);
         try {
-            await axios.post('https://md-collab-1.onrender.com/api/edits', {
+            await axios.post('/api/edits', {
                 fileId: selectedFile._id,
                 newContent: editContent
             });
@@ -164,6 +175,8 @@ export default function EditorDashboard() {
             // Demo mode
             alert('Edit sent for approval! (Demo mode)');
             setIsEditing(false);
+        } finally {
+            setSendingForApproval(false);
         }
     };
 
@@ -171,7 +184,7 @@ export default function EditorDashboard() {
         if (!newFileName || !newFileContent) return;
 
         try {
-            const response = await axios.post('https://md-collab-1.onrender.com/api/files', {
+            const response = await axios.post('/api/files', {
                 name: newFileName.endsWith('.md') ? newFileName : `${newFileName}.md`,
                 content: newFileContent
             });
@@ -208,6 +221,49 @@ export default function EditorDashboard() {
         a.download = editFileName;
         a.click();
         URL.revokeObjectURL(url);
+    };
+
+    const handleDeleteFile = () => {
+        if (!currentFileId || !isOwnFile) return;
+        setDeleteModal({
+            isOpen: true,
+            file: { _id: currentFileId, name: editFileName },
+            isFromEditor: true
+        });
+    };
+
+    const confirmDeleteFile = async () => {
+        const { file, isFromEditor } = deleteModal;
+        if (!file) return;
+
+        try {
+            await axios.delete(`/api/files/${file._id}`);
+            setDeleteModal({ isOpen: false, file: null, isFromEditor: false });
+            setAlertModal({ isOpen: true, message: 'File deleted successfully!', type: 'success' });
+
+            if (isFromEditor) {
+                setIsEditing(false);
+                setSelectedFile(null);
+                setCurrentFileId(null);
+            }
+            fetchData();
+        } catch (error) {
+            console.error('Delete error:', error?.response?.data || error);
+            setDeleteModal({ isOpen: false, file: null, isFromEditor: false });
+            setAlertModal({
+                isOpen: true,
+                message: error?.response?.data?.message || 'Failed to delete file. Please check your login and permissions.',
+                type: 'error'
+            });
+        }
+    };
+
+    const handleDeleteFileFromList = (file) => {
+        setDeleteModal({
+            isOpen: true,
+            file: file,
+            isFromEditor: false
+        });
     };
 
     const getStatusBadge = (status) => {
@@ -299,24 +355,38 @@ export default function EditorDashboard() {
                                 <p className="text-sm text-gray-500 py-2">No files created yet</p>
                             ) : (
                                 myFiles.map((file) => (
-                                    <button
+                                    <div
                                         key={file._id}
-                                        onClick={() => handleOpenFile(file)}
-                                        className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-purple-50 border border-gray-200 hover:border-purple-300 transition text-left"
+                                        className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-purple-50 border border-gray-200 hover:border-purple-300 transition"
                                     >
-                                        <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
-                                            <File className="w-4 h-4 text-purple-600" />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="font-medium text-gray-900 truncate">{file.name}</p>
-                                            <p className="text-xs text-gray-500">
-                                                Updated {new Date(file.updatedAt).toLocaleDateString()}
-                                            </p>
-                                        </div>
+                                        <button
+                                            onClick={() => handleOpenFile(file)}
+                                            className="flex items-center gap-3 flex-1 text-left"
+                                        >
+                                            <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+                                                <File className="w-4 h-4 text-purple-600" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-medium text-gray-900 truncate">{file.name}</p>
+                                                <p className="text-xs text-gray-500">
+                                                    Updated {new Date(file.updatedAt).toLocaleDateString()}
+                                                </p>
+                                            </div>
+                                        </button>
                                         <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
                                             Editable
                                         </span>
-                                    </button>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDeleteFileFromList(file);
+                                            }}
+                                            className="p-1.5 hover:bg-red-100 rounded-lg transition"
+                                            title="Delete file"
+                                        >
+                                            <Trash2 className="w-4 h-4 text-red-500" />
+                                        </button>
+                                    </div>
                                 ))
                             )}
                         </div>
@@ -360,6 +430,86 @@ export default function EditorDashboard() {
                 </div>
             </div>
         </div>
+    );
+
+    // Delete Confirmation Modal
+    const renderDeleteModal = () => (
+        deleteModal.isOpen && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden animate-in fade-in zoom-in duration-200">
+                    <div className="p-6">
+                        <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <Trash2 className="w-6 h-6 text-red-600" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">
+                            Delete File
+                        </h3>
+                        <p className="text-gray-600 text-center mb-2">
+                            Are you sure you want to delete
+                        </p>
+                        <p className="text-purple-600 font-medium text-center mb-2">
+                            "{deleteModal.file?.name}"
+                        </p>
+                        <p className="text-sm text-red-500 text-center">
+                            This action cannot be undone.
+                        </p>
+                    </div>
+                    <div className="px-6 pb-6 flex gap-3">
+                        <button
+                            onClick={() => setDeleteModal({ isOpen: false, file: null, isFromEditor: false })}
+                            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition font-medium"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={confirmDeleteFile}
+                            className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-medium flex items-center justify-center gap-2"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )
+    );
+
+    // Success/Alert Modal
+    const renderAlertModal = () => (
+        alertModal.isOpen && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full overflow-hidden animate-in fade-in zoom-in duration-200">
+                    <div className="p-6">
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${alertModal.type === 'success' ? 'bg-green-100' : 'bg-red-100'
+                            }`}>
+                            {alertModal.type === 'success' ? (
+                                <CheckCircle className="w-6 h-6 text-green-600" />
+                            ) : (
+                                <XCircle className="w-6 h-6 text-red-600" />
+                            )}
+                        </div>
+                        <h3 className={`text-lg font-semibold text-center mb-2 ${alertModal.type === 'success' ? 'text-green-700' : 'text-red-700'
+                            }`}>
+                            {alertModal.type === 'success' ? 'Success!' : 'Error'}
+                        </h3>
+                        <p className="text-gray-600 text-center">
+                            {alertModal.message}
+                        </p>
+                    </div>
+                    <div className="px-6 pb-6">
+                        <button
+                            onClick={() => setAlertModal({ isOpen: false, message: '', type: 'success' })}
+                            className={`w-full px-4 py-2.5 rounded-lg transition font-medium ${alertModal.type === 'success'
+                                ? 'bg-purple-600 text-white hover:bg-purple-700'
+                                : 'bg-red-600 text-white hover:bg-red-700'
+                                }`}
+                        >
+                            OK
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )
     );
 
     // Create New File Modal
@@ -437,11 +587,14 @@ export default function EditorDashboard() {
         return (
             <div className="space-y-6">
                 {isOpenModalVisible && renderOpenModal()}
+                {renderDeleteModal()}
+                {renderAlertModal()}
 
-                <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                        <div className="flex items-center gap-3">
-                            <h1 className="text-2xl font-bold text-gray-900">
+                {/* Sticky Header with Action Buttons */}
+                <div className="sticky top-16 z-40 bg-white border-b border-gray-200 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-3 shadow-sm">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <h1 className="text-lg font-bold text-gray-900 truncate">
                                 {isOwnFile ? 'Editing: ' : 'Viewing: '}
                                 <input
                                     type="text"
@@ -456,31 +609,80 @@ export default function EditorDashboard() {
                             </h1>
                             {getSaveStatusIndicator()}
                         </div>
-                        <p className="text-gray-500 mt-1">
-                            {isOwnFile ? 'You can save changes directly' : 'Make changes and send for approval'}
-                        </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => setIsOpenModalVisible(true)}
-                            className="p-2 hover:bg-gray-100 rounded-lg transition"
-                            title="Open file"
-                        >
-                            <FolderOpen className="w-5 h-5 text-gray-600" />
-                        </button>
-                        <button
-                            onClick={handleDownloadFile}
-                            className="p-2 hover:bg-gray-100 rounded-lg transition"
-                            title="Download file"
-                        >
-                            <Download className="w-5 h-5 text-gray-600" />
-                        </button>
-                        <button
-                            onClick={() => setIsEditing(false)}
-                            className="p-2 hover:bg-gray-100 rounded-lg transition"
-                        >
-                            <X className="w-6 h-6 text-gray-500" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {/* Cancel */}
+                            <button
+                                onClick={() => setIsEditing(false)}
+                                className="px-3 py-1.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition text-sm font-medium"
+                            >
+                                Cancel
+                            </button>
+
+                            {/* Save button - only for own files */}
+                            {isOwnFile && (
+                                <button
+                                    onClick={handleSaveFile}
+                                    disabled={!hasUnsavedChanges || saving}
+                                    className="px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50 flex items-center gap-1.5 text-sm font-medium"
+                                >
+                                    {saving ? (
+                                        <RefreshCw className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                        <Save className="w-4 h-4" />
+                                    )}
+                                    Save
+                                </button>
+                            )}
+
+                            {/* Send for Approval - hide for admin */}
+                            {user?.role !== 'admin' && (
+                                <button
+                                    onClick={handleSendForApproval}
+                                    disabled={editContent === selectedFile.content || sendingForApproval}
+                                    className="px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50 flex items-center gap-1.5 text-sm font-medium"
+                                >
+                                    {sendingForApproval ? (
+                                        <RefreshCw className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                        <Send className="w-4 h-4" />
+                                    )}
+                                    {sendingForApproval ? 'Sending...' : 'Send for Approval'}
+                                </button>
+                            )}
+
+                            {/* Divider */}
+                            <div className="w-px h-6 bg-gray-300 mx-1"></div>
+
+                            <button
+                                onClick={() => setIsOpenModalVisible(true)}
+                                className="p-2 hover:bg-gray-100 rounded-lg transition"
+                                title="Open file"
+                            >
+                                <FolderOpen className="w-5 h-5 text-gray-600" />
+                            </button>
+                            <button
+                                onClick={handleDownloadFile}
+                                className="p-2 hover:bg-gray-100 rounded-lg transition"
+                                title="Download file"
+                            >
+                                <Download className="w-5 h-5 text-gray-600" />
+                            </button>
+                            {isOwnFile && (
+                                <button
+                                    onClick={handleDeleteFile}
+                                    className="p-2 hover:bg-red-100 rounded-lg transition"
+                                    title="Delete file"
+                                >
+                                    <Trash2 className="w-5 h-5 text-red-600" />
+                                </button>
+                            )}
+                            <button
+                                onClick={() => setIsEditing(false)}
+                                className="p-2 hover:bg-gray-100 rounded-lg transition"
+                            >
+                                <X className="w-6 h-6 text-gray-500" />
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -522,54 +724,19 @@ export default function EditorDashboard() {
                     />
                 )}
 
-                <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2 text-sm text-gray-500">
-                        {isOwnFile ? (
-                            <span className="flex items-center gap-1 bg-green-50 text-green-700 px-2 py-1 rounded">
-                                <CheckCircle className="w-3 h-3" />
-                                Your file - Can save directly or send for review
-                            </span>
-                        ) : (
-                            <span className="flex items-center gap-1 bg-yellow-50 text-yellow-700 px-2 py-1 rounded">
-                                <AlertCircle className="w-3 h-3" />
-                                Not your file - Requires admin approval
-                            </span>
-                        )}
-                    </div>
-                    <div className="flex gap-3">
-                        <button
-                            onClick={() => setIsEditing(false)}
-                            className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition"
-                        >
-                            Cancel
-                        </button>
-
-                        {/* Save button - only for own files */}
-                        {isOwnFile && (
-                            <button
-                                onClick={handleSaveFile}
-                                disabled={!hasUnsavedChanges || saving}
-                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50 flex items-center gap-2"
-                            >
-                                {saving ? (
-                                    <RefreshCw className="w-4 h-4 animate-spin" />
-                                ) : (
-                                    <Save className="w-4 h-4" />
-                                )}
-                                Save
-                            </button>
-                        )}
-
-                        {/* Send for Approval - always available when there are changes */}
-                        <button
-                            onClick={handleSendForApproval}
-                            disabled={editContent === selectedFile.content}
-                            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50 flex items-center gap-2"
-                        >
-                            <Send className="w-4 h-4" />
-                            Send for Approval
-                        </button>
-                    </div>
+                {/* File ownership indicator */}
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                    {isOwnFile ? (
+                        <span className="flex items-center gap-1 bg-green-50 text-green-700 px-2 py-1 rounded">
+                            <CheckCircle className="w-3 h-3" />
+                            Your file - Can save directly or send for review
+                        </span>
+                    ) : (
+                        <span className="flex items-center gap-1 bg-yellow-50 text-yellow-700 px-2 py-1 rounded">
+                            <AlertCircle className="w-3 h-3" />
+                            Not your file - Requires admin approval
+                        </span>
+                    )}
                 </div>
             </div>
         );
@@ -598,6 +765,8 @@ export default function EditorDashboard() {
             )}
 
             {isOpenModalVisible && renderOpenModal()}
+            {renderDeleteModal()}
+            {renderAlertModal()}
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
