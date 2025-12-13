@@ -23,9 +23,7 @@ const allowedOrigins = [
     'http://localhost:3001',
     'http://localhost:5173',
     'http://localhost:5174',
-    'https://md-collab.vercel.app',           // Add your actual Vercel URL here after deployment
-    'https://md-collab-frontend.vercel.app',  // Alternative naming
-    // Add any preview deployment URLs if needed
+
 ];
 
 // Socket.io setup with CORS
