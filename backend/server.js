@@ -17,10 +17,31 @@ dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 
-// Socket.io setup
+// Allowed origins for CORS
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'https://md-collab.vercel.app',           // Add your actual Vercel URL here after deployment
+    'https://md-collab-frontend.vercel.app',  // Alternative naming
+    // Add any preview deployment URLs if needed
+];
+
+// Socket.io setup with CORS
 const io = new Server(httpServer, {
     cors: {
-        origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'],
+        origin: (origin, callback) => {
+            // Allow requests with no origin (like mobile apps or Postman)
+            if (!origin) return callback(null, true);
+
+            // Check if origin is in allowed list or matches Vercel pattern
+            if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+                callback(null, true);
+            } else {
+                callback(new Error('Not allowed by CORS'));
+            }
+        },
         methods: ['GET', 'POST'],
         credentials: true
     }
@@ -55,8 +76,25 @@ io.on('connection', (socket) => {
     });
 });
 
-// Middleware
-app.use(cors());
+// Express CORS Middleware
+app.use(cors({
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or Postman)
+        if (!origin) return callback(null, true);
+
+        // Check if origin is in allowed list or matches Vercel pattern
+        if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    exposedHeaders: ['Content-Range', 'X-Content-Range']
+}));
+
 app.use(express.json());
 
 // Connect to MongoDB
@@ -76,6 +114,22 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', message: 'MD Collab API is running' });
 });
 
+// Root route
+app.get('/', (req, res) => {
+    res.json({
+        message: 'MD Collab API',
+        status: 'running',
+        endpoints: {
+            health: '/api/health',
+            auth: '/api/auth',
+            files: '/api/files',
+            edits: '/api/edits',
+            users: '/api/users',
+            notifications: '/api/notifications'
+        }
+    });
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error(err.stack);
@@ -86,4 +140,5 @@ const PORT = process.env.PORT || 5000;
 httpServer.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🔌 Socket.io ready for connections`);
+    console.log(`🌐 Allowed origins:`, allowedOrigins);
 });
