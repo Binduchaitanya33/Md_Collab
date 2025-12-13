@@ -26,7 +26,7 @@ export function NotificationProvider({ children }) {
         if (user) {
             const token = localStorage.getItem('token');
             if (token) {
-                const newSocket = io('http://localhost:5000', {
+                const newSocket = io('https://md-collab-1.onrender.com', {
                     auth: { token },
                     transports: ['websocket', 'polling']
                 });
@@ -79,8 +79,8 @@ export function NotificationProvider({ children }) {
         setLoading(true);
         try {
             const [notifRes, countRes] = await Promise.all([
-                axios.get('/api/notifications?limit=20'),
-                axios.get('/api/notifications/unread')
+                axios.get('https://md-collab-1.onrender.com/api/notifications?limit=20'),
+                axios.get('https://md-collab-1.onrender.com/api/notifications/unread')
             ]);
             setNotifications(notifRes.data.notifications || []);
             setUnreadCount(countRes.data.count || 0);
@@ -107,7 +107,7 @@ export function NotificationProvider({ children }) {
             );
             setUnreadCount(prev => Math.max(0, prev - 1));
 
-            await axios.post(`/api/notifications/${notificationId}/read`);
+            await axios.post(`https://md-collab-1.onrender.com/api/notifications/${notificationId}/read`);
         } catch (error) {
             console.error('Error marking notification as read:', error);
             // Revert on error
@@ -122,7 +122,7 @@ export function NotificationProvider({ children }) {
             setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
             setUnreadCount(0);
 
-            await axios.post('/api/notifications/mark-read', { all: true });
+            await axios.post('https://md-collab-1.onrender.com/api/notifications/mark-read', { all: true });
         } catch (error) {
             console.error('Error marking all as read:', error);
             fetchNotifications();
@@ -140,7 +140,7 @@ export function NotificationProvider({ children }) {
                 setUnreadCount(prev => Math.max(0, prev - 1));
             }
 
-            await axios.delete(`/api/notifications/${notificationId}`);
+            await axios.delete(`https://md-collab-1.onrender.com/api/notifications/${notificationId}`);
         } catch (error) {
             console.error('Error deleting notification:', error);
             fetchNotifications();
@@ -152,7 +152,7 @@ export function NotificationProvider({ children }) {
         try {
             setNotifications([]);
             setUnreadCount(0);
-            await axios.delete('/api/notifications');
+            await axios.delete('https://md-collab-1.onrender.com/api/notifications');
         } catch (error) {
             console.error('Error clearing notifications:', error);
             fetchNotifications();

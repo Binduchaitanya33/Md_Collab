@@ -16,7 +16,7 @@ export default function ViewerDashboard() {
 
     const fetchFiles = async () => {
         try {
-            const response = await axios.get('/api/files');
+            const response = await axios.get('https://md-collab-1.onrender.com/api/files');
             setFiles(response.data);
             setBackendConnected(true);
         } catch (error) {

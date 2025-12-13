@@ -20,7 +20,7 @@ export function AuthProvider({ children }) {
 
     const login = async (email, password) => {
         try {
-            const response = await axios.post('/api/auth/login', { email, password });
+            const response = await axios.post('https://md-collab-1.onrender.com/api/auth/login', { email, password });
             const { user, token } = response.data;
 
             localStorage.setItem('user', JSON.stringify(user));
@@ -36,7 +36,7 @@ export function AuthProvider({ children }) {
 
     const register = async (name, email, password, role) => {
         try {
-            const response = await axios.post('/api/auth/register', { name, email, password, role });
+            const response = await axios.post('https://md-collab-1.onrender.com/api/auth/register', { name, email, password, role });
             const { user, token } = response.data;
 
             localStorage.setItem('user', JSON.stringify(user));
