@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     FileText,
     Plus,
@@ -15,7 +15,17 @@ import {
     Download,
     RefreshCw,
     File,
-    Trash2
+    Trash2,
+    Folder,
+    FolderPlus,
+    ChevronRight,
+    ChevronDown,
+    ArrowLeft,
+    Upload,
+    Github,
+    Search,
+    ExternalLink,
+    Loader2
 } from 'lucide-react';
 import axios from '../config/axiosConfig';
 import { useAuth } from '../context/AuthContext';
@@ -28,9 +38,14 @@ export default function EditorDashboard() {
     const [files, setFiles] = useState([]);
     const [myFiles, setMyFiles] = useState([]);
     const [myEdits, setMyEdits] = useState([]);
+    const [folders, setFolders] = useState([]);
+    const [currentFolder, setCurrentFolder] = useState(null); // null = root
+    const [folderPath, setFolderPath] = useState([]); // breadcrumb path
     const [selectedFile, setSelectedFile] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
+    const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+    const [newFolderName, setNewFolderName] = useState('');
     const [isOpenModalVisible, setIsOpenModalVisible] = useState(false);
     const [editContent, setEditContent] = useState('');
     const [editFileName, setEditFileName] = useState('');
@@ -46,10 +61,32 @@ export default function EditorDashboard() {
     const [activeTab, setActiveTab] = useState('myfiles');
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [backendConnected, setBackendConnected] = useState(true);
+    const [expandedFolders, setExpandedFolders] = useState(new Set());
 
     // Delete modal state
     const [deleteModal, setDeleteModal] = useState({ isOpen: false, file: null, isFromEditor: false });
+    const [deleteFolderModal, setDeleteFolderModal] = useState({ isOpen: false, folder: null });
     const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', type: 'success' });
+
+    // File upload state
+    const fileInputRef = useRef(null);
+    const folderInputRef = useRef(null);
+    const [isUploadModalVisible, setIsUploadModalVisible] = useState(false);
+    const [uploadingFiles, setUploadingFiles] = useState(false);
+
+    // GitHub import state
+    const [isGithubModalVisible, setIsGithubModalVisible] = useState(false);
+    const [githubRepoUrl, setGithubRepoUrl] = useState('');
+    const [githubRepoContents, setGithubRepoContents] = useState(null);
+    const [githubLoading, setGithubLoading] = useState(false);
+    const [githubCurrentPath, setGithubCurrentPath] = useState('');
+    const [githubOwner, setGithubOwner] = useState('');
+    const [githubRepo, setGithubRepo] = useState('');
+    const [importingRepo, setImportingRepo] = useState(false);
+
+    // GitHub sync state
+    const [syncingFile, setSyncingFile] = useState(null);
+    const [syncingFolder, setSyncingFolder] = useState(null);
 
     useEffect(() => {
         fetchData();
@@ -57,14 +94,16 @@ export default function EditorDashboard() {
 
     const fetchData = async () => {
         try {
-            const [filesRes, myFilesRes, editsRes] = await Promise.all([
+            const [filesRes, myFilesRes, editsRes, foldersRes] = await Promise.all([
                 axios.get('/api/files'),
                 axios.get('/api/files/my/files'),
-                axios.get('/api/edits/my')
+                axios.get('/api/edits/my'),
+                axios.get('/api/folders/my')
             ]);
             setFiles(filesRes.data);
             setMyFiles(myFilesRes.data);
             setMyEdits(editsRes.data);
+            setFolders(foldersRes.data);
             setBackendConnected(true);
         } catch (error) {
             setBackendConnected(false);
@@ -76,6 +115,7 @@ export default function EditorDashboard() {
                     content: '# Welcome to MD Collab\n\nThis is a **collaborative markdown editing platform**.\n\n## Features\n\n- Role-based access control\n- Real-time markdown preview\n- GitHub-style diff viewer\n- Approval workflow\n\n## Getting Started\n\n1. Login with your credentials\n2. Navigate to your dashboard\n3. Start collaborating!',
                     author: { _id: 'user1', name: 'Admin User' },
                     status: 'approved',
+                    folder: null,
                     updatedAt: new Date().toISOString()
                 },
                 {
@@ -84,11 +124,13 @@ export default function EditorDashboard() {
                     content: '# Contributing Guidelines\n\nWe welcome contributions!\n\n## How to Contribute\n\n1. Fork the repository\n2. Create a feature branch\n3. Make your changes\n4. Submit a pull request',
                     author: { _id: 'currentUser', name: 'Editor User' },
                     status: 'approved',
+                    folder: null,
                     updatedAt: new Date().toISOString()
                 }
             ];
             setFiles(demoFiles);
             setMyFiles(demoFiles.filter(f => f.author._id === 'currentUser'));
+            setFolders([]);
             setMyEdits([
                 {
                     _id: 'e1',
@@ -186,7 +228,8 @@ export default function EditorDashboard() {
         try {
             const response = await axios.post('/api/files', {
                 name: newFileName.endsWith('.md') ? newFileName : `${newFileName}.md`,
-                content: newFileContent
+                content: newFileContent,
+                folderId: currentFolder // Include current folder
             });
 
             // Open the newly created file for editing
@@ -203,6 +246,7 @@ export default function EditorDashboard() {
                 content: newFileContent,
                 author: { _id: 'currentUser', name: 'You' },
                 status: 'approved',
+                folder: currentFolder,
                 updatedAt: new Date().toISOString()
             };
             setMyFiles(prev => [newFile, ...prev]);
@@ -210,6 +254,417 @@ export default function EditorDashboard() {
             handleStartEdit(newFile, true);
             setNewFileName('');
             setNewFileContent('');
+        }
+    };
+
+    // Folder functions
+    const handleCreateFolder = async () => {
+        if (!newFolderName.trim()) return;
+
+        try {
+            await axios.post('/api/folders', {
+                name: newFolderName.trim(),
+                parentId: currentFolder
+            });
+            setNewFolderName('');
+            setIsCreatingFolder(false);
+            fetchData();
+            setAlertModal({ isOpen: true, message: 'Folder created successfully!', type: 'success' });
+        } catch (error) {
+            const message = error?.response?.data?.message || 'Failed to create folder';
+            setAlertModal({ isOpen: true, message, type: 'error' });
+        }
+    };
+
+    const handleNavigateToFolder = (folder) => {
+        if (folder === null) {
+            // Go to root
+            setCurrentFolder(null);
+            setFolderPath([]);
+        } else {
+            setCurrentFolder(folder._id);
+            setFolderPath(prev => [...prev, folder]);
+        }
+    };
+
+    const handleNavigateUp = () => {
+        if (folderPath.length === 0) return;
+        const newPath = [...folderPath];
+        newPath.pop();
+        setFolderPath(newPath);
+        setCurrentFolder(newPath.length > 0 ? newPath[newPath.length - 1]._id : null);
+    };
+
+    const handleNavigateToBreadcrumb = (index) => {
+        if (index === -1) {
+            // Root
+            setCurrentFolder(null);
+            setFolderPath([]);
+        } else {
+            const newPath = folderPath.slice(0, index + 1);
+            setFolderPath(newPath);
+            setCurrentFolder(newPath[newPath.length - 1]._id);
+        }
+    };
+
+    const handleDeleteFolder = (folder) => {
+        setDeleteFolderModal({ isOpen: true, folder });
+    };
+
+    const confirmDeleteFolder = async () => {
+        const { folder } = deleteFolderModal;
+        if (!folder) return;
+
+        try {
+            await axios.delete(`/api/folders/${folder._id}`);
+            setDeleteFolderModal({ isOpen: false, folder: null });
+            setAlertModal({ isOpen: true, message: 'Folder deleted successfully!', type: 'success' });
+            fetchData();
+        } catch (error) {
+            const message = error?.response?.data?.message || 'Failed to delete folder';
+            setDeleteFolderModal({ isOpen: false, folder: null });
+            setAlertModal({ isOpen: true, message, type: 'error' });
+        }
+    };
+
+    const toggleFolderExpanded = (folderId) => {
+        setExpandedFolders(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(folderId)) {
+                newSet.delete(folderId);
+            } else {
+                newSet.add(folderId);
+            }
+            return newSet;
+        });
+    };
+
+    // Get files and folders for current folder view
+    const getCurrentFolderContents = () => {
+        const currentFolders = folders.filter(f =>
+            (f.parent === currentFolder) ||
+            (f.parent?._id === currentFolder) ||
+            (currentFolder === null && !f.parent)
+        );
+        const currentFiles = myFiles.filter(f =>
+            (f.folder === currentFolder) ||
+            (f.folder?._id === currentFolder) ||
+            (currentFolder === null && !f.folder)
+        );
+        return { folders: currentFolders, files: currentFiles };
+    };
+
+    // File Upload Functions
+    const handleFileUpload = async (event) => {
+        const files = Array.from(event.target.files);
+        if (files.length === 0) return;
+
+        // Filter for markdown files only
+        const mdFiles = files.filter(file => file.name.endsWith('.md'));
+        const nonMdFiles = files.filter(file => !file.name.endsWith('.md'));
+
+        if (nonMdFiles.length > 0) {
+            setAlertModal({
+                isOpen: true,
+                message: `${nonMdFiles.length} file(s) skipped. Only .md files are allowed.`,
+                type: 'error'
+            });
+        }
+
+        if (mdFiles.length === 0) {
+            event.target.value = '';
+            return;
+        }
+
+        setUploadingFiles(true);
+
+        try {
+            for (const file of mdFiles) {
+                const content = await file.text();
+                await axios.post('/api/files', {
+                    name: file.name,
+                    content: content,
+                    folderId: currentFolder
+                });
+            }
+            setAlertModal({
+                isOpen: true,
+                message: `Successfully uploaded ${mdFiles.length} file(s)!`,
+                type: 'success'
+            });
+            fetchData();
+        } catch (error) {
+            setAlertModal({
+                isOpen: true,
+                message: error?.response?.data?.message || 'Failed to upload files',
+                type: 'error'
+            });
+        } finally {
+            setUploadingFiles(false);
+            event.target.value = '';
+            setIsUploadModalVisible(false);
+        }
+    };
+
+    const handleFolderUpload = async (event) => {
+        const files = Array.from(event.target.files);
+        if (files.length === 0) return;
+
+        // Filter for markdown files only
+        const mdFiles = files.filter(file => file.name.endsWith('.md'));
+
+        if (mdFiles.length === 0) {
+            setAlertModal({
+                isOpen: true,
+                message: 'No .md files found in the selected folder.',
+                type: 'error'
+            });
+            event.target.value = '';
+            return;
+        }
+
+        setUploadingFiles(true);
+
+        try {
+            // Group files by folder path
+            const folderStructure = {};
+            mdFiles.forEach(file => {
+                const pathParts = file.webkitRelativePath.split('/');
+                const folderPath = pathParts.slice(0, -1).join('/');
+                if (!folderStructure[folderPath]) {
+                    folderStructure[folderPath] = [];
+                }
+                folderStructure[folderPath].push(file);
+            });
+
+            // Create folders and upload files
+            const folderIds = {};
+            const sortedPaths = Object.keys(folderStructure).sort((a, b) => a.split('/').length - b.split('/').length);
+
+            for (const folderPath of sortedPaths) {
+                const pathParts = folderPath.split('/');
+                let parentId = currentFolder;
+
+                // Create folder hierarchy
+                for (let i = 0; i < pathParts.length; i++) {
+                    const currentPath = pathParts.slice(0, i + 1).join('/');
+                    if (!folderIds[currentPath]) {
+                        try {
+                            const response = await axios.post('/api/folders', {
+                                name: pathParts[i],
+                                parentId: parentId
+                            });
+                            folderIds[currentPath] = response.data._id;
+                        } catch (error) {
+                            // Folder might already exist, try to find it
+                            const existingFolder = folders.find(f =>
+                                f.name === pathParts[i] &&
+                                ((f.parent === parentId) || (f.parent?._id === parentId) || (!f.parent && !parentId))
+                            );
+                            if (existingFolder) {
+                                folderIds[currentPath] = existingFolder._id;
+                            }
+                        }
+                    }
+                    parentId = folderIds[currentPath];
+                }
+
+                // Upload files to this folder
+                const targetFolderId = folderIds[folderPath];
+                for (const file of folderStructure[folderPath]) {
+                    const content = await file.text();
+                    await axios.post('/api/files', {
+                        name: file.name,
+                        content: content,
+                        folderId: targetFolderId
+                    });
+                }
+            }
+
+            setAlertModal({
+                isOpen: true,
+                message: `Successfully uploaded ${mdFiles.length} file(s)!`,
+                type: 'success'
+            });
+            fetchData();
+        } catch (error) {
+            setAlertModal({
+                isOpen: true,
+                message: error?.response?.data?.message || 'Failed to upload folder',
+                type: 'error'
+            });
+        } finally {
+            setUploadingFiles(false);
+            event.target.value = '';
+            setIsUploadModalVisible(false);
+        }
+    };
+
+    // GitHub Import Functions
+    const parseGithubUrl = (url) => {
+        const match = url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+        if (match) {
+            return { owner: match[1], repo: match[2].replace('.git', '') };
+        }
+        return null;
+    };
+
+    const handleGithubSearch = async () => {
+        const parsed = parseGithubUrl(githubRepoUrl);
+        if (!parsed) {
+            // Try treating as owner/repo format
+            const parts = githubRepoUrl.split('/');
+            if (parts.length >= 2) {
+                setGithubOwner(parts[0]);
+                setGithubRepo(parts[1]);
+            } else {
+                setAlertModal({
+                    isOpen: true,
+                    message: 'Invalid GitHub URL. Use format: https://github.com/owner/repo or owner/repo',
+                    type: 'error'
+                });
+                return;
+            }
+        } else {
+            setGithubOwner(parsed.owner);
+            setGithubRepo(parsed.repo);
+        }
+
+        setGithubLoading(true);
+        setGithubCurrentPath('');
+
+        try {
+            const owner = parsed?.owner || githubRepoUrl.split('/')[0];
+            const repo = parsed?.repo || githubRepoUrl.split('/')[1];
+
+            const response = await axios.get('/api/github/repo', {
+                params: { owner, repo, path: '' }
+            });
+            setGithubRepoContents(response.data);
+            setGithubOwner(owner);
+            setGithubRepo(repo);
+        } catch (error) {
+            setAlertModal({
+                isOpen: true,
+                message: error?.response?.data?.message || 'Failed to fetch repository. Make sure it\'s a public repo.',
+                type: 'error'
+            });
+            setGithubRepoContents(null);
+        } finally {
+            setGithubLoading(false);
+        }
+    };
+
+    const handleGithubNavigate = async (path) => {
+        setGithubLoading(true);
+        try {
+            const response = await axios.get('/api/github/repo', {
+                params: { owner: githubOwner, repo: githubRepo, path }
+            });
+            setGithubRepoContents(response.data);
+            setGithubCurrentPath(path);
+        } catch (error) {
+            setAlertModal({
+                isOpen: true,
+                message: 'Failed to navigate to folder',
+                type: 'error'
+            });
+        } finally {
+            setGithubLoading(false);
+        }
+    };
+
+    const handleGithubImport = async () => {
+        if (!githubOwner || !githubRepo) return;
+
+        setImportingRepo(true);
+        try {
+            const response = await axios.post('/api/github/import', {
+                owner: githubOwner,
+                repo: githubRepo,
+                parentFolderId: currentFolder
+            });
+            setAlertModal({
+                isOpen: true,
+                message: response.data.message,
+                type: 'success'
+            });
+            setIsGithubModalVisible(false);
+            setGithubRepoContents(null);
+            setGithubRepoUrl('');
+            setGithubOwner('');
+            setGithubRepo('');
+            fetchData();
+        } catch (error) {
+            setAlertModal({
+                isOpen: true,
+                message: error?.response?.data?.message || 'Failed to import repository',
+                type: 'error'
+            });
+        } finally {
+            setImportingRepo(false);
+        }
+    };
+
+    const handleSyncFromGithub = async (fileId) => {
+        setSyncingFile(fileId);
+        try {
+            const response = await axios.post(`/api/github/sync/${fileId}`);
+            if (response.data.synced) {
+                setAlertModal({
+                    isOpen: true,
+                    message: 'File synced successfully from GitHub!',
+                    type: 'success'
+                });
+                // Update the file in state
+                const updatedFile = response.data.file;
+                setMyFiles(prev => prev.map(f => f._id === fileId ? updatedFile : f));
+                setFiles(prev => prev.map(f => f._id === fileId ? updatedFile : f));
+                // Update selected file if it's the one being synced
+                if (selectedFile && selectedFile._id === fileId) {
+                    setSelectedFile(updatedFile);
+                }
+                // Update edit content if editing this file
+                if (currentFileId === fileId) {
+                    setEditContent(updatedFile.content);
+                }
+            } else {
+                setAlertModal({
+                    isOpen: true,
+                    message: 'File is already up to date with GitHub.',
+                    type: 'success'
+                });
+            }
+        } catch (error) {
+            setAlertModal({
+                isOpen: true,
+                message: error?.response?.data?.message || 'Failed to sync from GitHub',
+                type: 'error'
+            });
+        } finally {
+            setSyncingFile(null);
+        }
+    };
+
+    const handleSyncFolderFromGithub = async (folderId) => {
+        setSyncingFolder(folderId);
+        try {
+            const response = await axios.post(`/api/github/sync-folder/${folderId}`);
+            setAlertModal({
+                isOpen: true,
+                message: response.data.message,
+                type: 'success'
+            });
+            // Refresh data to get updated files
+            fetchData();
+        } catch (error) {
+            setAlertModal({
+                isOpen: true,
+                message: error?.response?.data?.message || 'Failed to sync folder from GitHub',
+                type: 'error'
+            });
+        } finally {
+            setSyncingFolder(null);
         }
     };
 
@@ -367,7 +822,12 @@ export default function EditorDashboard() {
                                                 <File className="w-4 h-4 text-purple-600" />
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <p className="font-medium text-gray-900 truncate">{file.name}</p>
+                                                <div className="flex items-center gap-2">
+                                                    <p className="font-medium text-gray-900 truncate">{file.name}</p>
+                                                    {file.githubSource?.downloadUrl && (
+                                                        <Github className="w-3 h-3 text-gray-400" />
+                                                    )}
+                                                </div>
                                                 <p className="text-xs text-gray-500">
                                                     Updated {new Date(file.updatedAt).toLocaleDateString()}
                                                 </p>
@@ -376,6 +836,23 @@ export default function EditorDashboard() {
                                         <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
                                             Editable
                                         </span>
+                                        {file.githubSource?.downloadUrl && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleSyncFromGithub(file._id);
+                                                }}
+                                                disabled={syncingFile === file._id}
+                                                className="p-1.5 hover:bg-gray-100 rounded-lg transition"
+                                                title="Sync from GitHub"
+                                            >
+                                                {syncingFile === file._id ? (
+                                                    <Loader2 className="w-4 h-4 text-gray-500 animate-spin" />
+                                                ) : (
+                                                    <RefreshCw className="w-4 h-4 text-gray-500" />
+                                                )}
+                                            </button>
+                                        )}
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation();
@@ -512,12 +989,366 @@ export default function EditorDashboard() {
         )
     );
 
+    // Delete Folder Confirmation Modal
+    const renderDeleteFolderModal = () => (
+        deleteFolderModal.isOpen && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden animate-in fade-in zoom-in duration-200">
+                    <div className="p-6">
+                        <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <Folder className="w-6 h-6 text-red-600" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">
+                            Delete Folder
+                        </h3>
+                        <p className="text-gray-600 text-center mb-2">
+                            Are you sure you want to delete
+                        </p>
+                        <p className="text-purple-600 font-medium text-center mb-2">
+                            "{deleteFolderModal.folder?.name}"
+                        </p>
+                        <p className="text-sm text-red-500 text-center">
+                            All files and subfolders inside will also be deleted.
+                        </p>
+                    </div>
+                    <div className="px-6 pb-6 flex gap-3">
+                        <button
+                            onClick={() => setDeleteFolderModal({ isOpen: false, folder: null })}
+                            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition font-medium"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={confirmDeleteFolder}
+                            className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-medium flex items-center justify-center gap-2"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )
+    );
+
+    // Create Folder Modal
+    const renderCreateFolderModal = () => (
+        isCreatingFolder && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden">
+                    <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                        <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+                            <FolderPlus className="w-5 h-5 text-purple-600" />
+                            Create New Folder
+                        </h2>
+                        <button
+                            onClick={() => {
+                                setIsCreatingFolder(false);
+                                setNewFolderName('');
+                            }}
+                            className="p-2 hover:bg-gray-100 rounded-lg transition"
+                        >
+                            <X className="w-5 h-5 text-gray-500" />
+                        </button>
+                    </div>
+                    <div className="p-4">
+                        {folderPath.length > 0 && (
+                            <p className="text-sm text-gray-500 mb-3">
+                                Creating in: <span className="text-purple-600 font-medium">{folderPath[folderPath.length - 1].name}</span>
+                            </p>
+                        )}
+                        <input
+                            type="text"
+                            placeholder="Folder name"
+                            value={newFolderName}
+                            onChange={(e) => setNewFolderName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
+                            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            autoFocus
+                        />
+                    </div>
+                    <div className="px-4 pb-4 flex gap-3">
+                        <button
+                            onClick={() => {
+                                setIsCreatingFolder(false);
+                                setNewFolderName('');
+                            }}
+                            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition font-medium"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={handleCreateFolder}
+                            disabled={!newFolderName.trim()}
+                            className="flex-1 px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        >
+                            <FolderPlus className="w-4 h-4" />
+                            Create
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )
+    );
+
+    // Upload Modal
+    const renderUploadModal = () => (
+        isUploadModalVisible && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden">
+                    <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                        <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+                            <Upload className="w-5 h-5 text-purple-600" />
+                            Upload Files
+                        </h2>
+                        <button
+                            onClick={() => setIsUploadModalVisible(false)}
+                            className="p-2 hover:bg-gray-100 rounded-lg transition"
+                        >
+                            <X className="w-5 h-5 text-gray-500" />
+                        </button>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        {folderPath.length > 0 && (
+                            <p className="text-sm text-gray-500">
+                                Uploading to: <span className="text-purple-600 font-medium">{folderPath[folderPath.length - 1].name}</span>
+                            </p>
+                        )}
+
+                        <p className="text-sm text-gray-600">
+                            Only <span className="font-medium text-purple-600">.md</span> (Markdown) files will be uploaded. Other file types will be skipped.
+                        </p>
+
+                        {/* Hidden file inputs */}
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".md"
+                            multiple
+                            onChange={handleFileUpload}
+                            className="hidden"
+                        />
+                        <input
+                            ref={folderInputRef}
+                            type="file"
+                            webkitdirectory=""
+                            directory=""
+                            multiple
+                            onChange={handleFolderUpload}
+                            className="hidden"
+                        />
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={uploadingFiles}
+                                className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-gray-300 rounded-xl hover:border-purple-400 hover:bg-purple-50 transition disabled:opacity-50"
+                            >
+                                <File className="w-8 h-8 text-purple-600" />
+                                <span className="text-sm font-medium text-gray-700">Upload Files</span>
+                                <span className="text-xs text-gray-500">Select .md files</span>
+                            </button>
+
+                            <button
+                                onClick={() => folderInputRef.current?.click()}
+                                disabled={uploadingFiles}
+                                className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-gray-300 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition disabled:opacity-50"
+                            >
+                                <Folder className="w-8 h-8 text-blue-600" />
+                                <span className="text-sm font-medium text-gray-700">Upload Folder</span>
+                                <span className="text-xs text-gray-500">With subfolders</span>
+                            </button>
+                        </div>
+
+                        {uploadingFiles && (
+                            <div className="flex items-center justify-center gap-2 text-purple-600">
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                                <span>Uploading...</span>
+                            </div>
+                        )}
+                    </div>
+                    <div className="px-4 pb-4">
+                        <button
+                            onClick={() => setIsUploadModalVisible(false)}
+                            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition font-medium"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )
+    );
+
+    // GitHub Import Modal
+    const renderGithubModal = () => (
+        isGithubModalVisible && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+                    <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                        <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+                            <Github className="w-5 h-5" />
+                            Import from GitHub
+                        </h2>
+                        <button
+                            onClick={() => {
+                                setIsGithubModalVisible(false);
+                                setGithubRepoContents(null);
+                                setGithubRepoUrl('');
+                            }}
+                            className="p-2 hover:bg-gray-100 rounded-lg transition"
+                        >
+                            <X className="w-5 h-5 text-gray-500" />
+                        </button>
+                    </div>
+
+                    <div className="p-4 border-b border-gray-100">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Public Repository URL
+                        </label>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                placeholder="https://github.com/owner/repo or owner/repo"
+                                value={githubRepoUrl}
+                                onChange={(e) => setGithubRepoUrl(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleGithubSearch()}
+                                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            />
+                            <button
+                                onClick={handleGithubSearch}
+                                disabled={!githubRepoUrl.trim() || githubLoading}
+                                className="px-4 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition disabled:opacity-50 flex items-center gap-2"
+                            >
+                                {githubLoading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <Search className="w-4 h-4" />
+                                )}
+                                View
+                            </button>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2">
+                            Only public repositories are supported. Only .md files will be imported.
+                        </p>
+                    </div>
+
+                    {/* Repository Contents */}
+                    {githubRepoContents && (
+                        <div className="flex-1 overflow-y-auto p-4">
+                            <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                    <Github className="w-5 h-5" />
+                                    <span className="font-medium">{githubOwner}/{githubRepo}</span>
+                                    {githubCurrentPath && (
+                                        <span className="text-gray-500">/ {githubCurrentPath}</span>
+                                    )}
+                                </div>
+                                <a
+                                    href={`https://github.com/${githubOwner}/${githubRepo}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-sm text-purple-600 hover:underline flex items-center gap-1"
+                                >
+                                    View on GitHub <ExternalLink className="w-3 h-3" />
+                                </a>
+                            </div>
+
+                            {githubCurrentPath && (
+                                <button
+                                    onClick={() => {
+                                        const parentPath = githubCurrentPath.split('/').slice(0, -1).join('/');
+                                        handleGithubNavigate(parentPath);
+                                    }}
+                                    className="flex items-center gap-2 text-gray-600 hover:text-purple-600 mb-3"
+                                >
+                                    <ArrowLeft className="w-4 h-4" />
+                                    Back
+                                </button>
+                            )}
+
+                            <div className="space-y-2">
+                                {githubRepoContents.items?.length === 0 ? (
+                                    <p className="text-gray-500 text-center py-4">No markdown files or folders found.</p>
+                                ) : (
+                                    githubRepoContents.items?.map((item) => (
+                                        <div
+                                            key={item.path}
+                                            className={`flex items-center gap-3 p-3 rounded-lg border ${item.type === 'folder'
+                                                ? 'border-blue-200 hover:bg-blue-50 cursor-pointer'
+                                                : 'border-gray-200 hover:bg-gray-50'
+                                                } transition`}
+                                            onClick={() => item.type === 'folder' && handleGithubNavigate(item.path)}
+                                        >
+                                            {item.type === 'folder' ? (
+                                                <Folder className="w-5 h-5 text-blue-600" />
+                                            ) : (
+                                                <FileText className="w-5 h-5 text-purple-600" />
+                                            )}
+                                            <span className="flex-1 font-medium text-gray-900">{item.name}</span>
+                                            {item.type === 'folder' && (
+                                                <ChevronRight className="w-4 h-4 text-gray-400" />
+                                            )}
+                                            {item.type === 'file' && item.size && (
+                                                <span className="text-xs text-gray-500">
+                                                    {(item.size / 1024).toFixed(1)} KB
+                                                </span>
+                                            )}
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Import Button */}
+                    {githubRepoContents && (
+                        <div className="p-4 border-t border-gray-200 bg-gray-50">
+                            {folderPath.length > 0 && (
+                                <p className="text-sm text-gray-500 mb-3">
+                                    Will import to: <span className="text-purple-600 font-medium">{folderPath[folderPath.length - 1].name}</span>
+                                </p>
+                            )}
+                            <button
+                                onClick={handleGithubImport}
+                                disabled={importingRepo}
+                                className="w-full px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                                {importingRepo ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        Importing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <FolderPlus className="w-4 h-4" />
+                                        Create Folder from Repo
+                                    </>
+                                )}
+                            </button>
+                            <p className="text-xs text-gray-500 mt-2 text-center">
+                                This will create a folder named "{githubRepo}" with all markdown files from the repository.
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )
+    );
+
     // Create New File Modal
     if (isCreating) {
         return (
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
-                    <h1 className="text-2xl font-bold text-gray-900">Create New File</h1>
+                    <div>
+                        <h1 className="text-2xl font-bold text-gray-900">Create New File</h1>
+                        {folderPath.length > 0 && (
+                            <p className="text-sm text-gray-500 mt-1">
+                                In folder: <span className="text-purple-600 font-medium">{folderPath.map(f => f.name).join(' / ')}</span>
+                            </p>
+                        )}
+                    </div>
                     <button
                         onClick={() => setIsCreating(false)}
                         className="p-2 hover:bg-gray-100 rounded-lg transition"
@@ -594,7 +1425,7 @@ export default function EditorDashboard() {
                 <div className="sticky top-16 z-40 bg-white border-b border-gray-200 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-3 shadow-sm">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3 flex-1 min-w-0">
-                            <h1 className="text-lg font-bold text-gray-900 truncate">
+                            <h1 className="text-lg font-bold text-gray-900 truncate flex items-center gap-2">
                                 {isOwnFile ? 'Editing: ' : 'Viewing: '}
                                 <input
                                     type="text"
@@ -606,6 +1437,12 @@ export default function EditorDashboard() {
                                     disabled={!isOwnFile}
                                     className={`bg-transparent border-none focus:outline-none ${isOwnFile ? 'cursor-text' : 'cursor-default'}`}
                                 />
+                                {selectedFile.githubSource?.downloadUrl && (
+                                    <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full font-normal">
+                                        <Github className="w-3 h-3" />
+                                        GitHub
+                                    </span>
+                                )}
                             </h1>
                             {getSaveStatusIndicator()}
                         </div>
@@ -667,6 +1504,20 @@ export default function EditorDashboard() {
                             >
                                 <Download className="w-5 h-5 text-gray-600" />
                             </button>
+                            {isOwnFile && selectedFile.githubSource?.downloadUrl && (
+                                <button
+                                    onClick={() => handleSyncFromGithub(currentFileId)}
+                                    disabled={syncingFile === currentFileId}
+                                    className="p-2 hover:bg-gray-100 rounded-lg transition"
+                                    title="Sync from GitHub"
+                                >
+                                    {syncingFile === currentFileId ? (
+                                        <Loader2 className="w-5 h-5 text-gray-600 animate-spin" />
+                                    ) : (
+                                        <RefreshCw className="w-5 h-5 text-gray-600" />
+                                    )}
+                                </button>
+                            )}
                             {isOwnFile && (
                                 <button
                                     onClick={handleDeleteFile}
@@ -767,6 +1618,10 @@ export default function EditorDashboard() {
             {isOpenModalVisible && renderOpenModal()}
             {renderDeleteModal()}
             {renderAlertModal()}
+            {renderDeleteFolderModal()}
+            {renderCreateFolderModal()}
+            {renderUploadModal()}
+            {renderGithubModal()}
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
@@ -774,20 +1629,41 @@ export default function EditorDashboard() {
                     <p className="text-gray-500 mt-1">Create and edit markdown files</p>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        onClick={() => setIsGithubModalVisible(true)}
+                        className="inline-flex items-center px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm"
+                    >
+                        <Github className="w-4 h-4 mr-1.5" />
+                        GitHub
+                    </button>
+                    <button
+                        onClick={() => setIsUploadModalVisible(true)}
+                        className="inline-flex items-center px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm"
+                    >
+                        <Upload className="w-4 h-4 mr-1.5" />
+                        Upload
+                    </button>
+                    <button
+                        onClick={() => setIsCreatingFolder(true)}
+                        className="inline-flex items-center px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm"
+                    >
+                        <FolderPlus className="w-4 h-4 mr-1.5" />
+                        New Folder
+                    </button>
                     <button
                         onClick={() => setIsOpenModalVisible(true)}
-                        className="inline-flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                        className="inline-flex items-center px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm"
                     >
-                        <FolderOpen className="w-5 h-5 mr-2" />
-                        Open File
+                        <FolderOpen className="w-4 h-4 mr-1.5" />
+                        Open
                     </button>
                     <button
                         onClick={() => setIsCreating(true)}
-                        className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
+                        className="inline-flex items-center px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-sm"
                     >
-                        <Plus className="w-5 h-5 mr-2" />
-                        Create New
+                        <Plus className="w-4 h-4 mr-1.5" />
+                        Create
                     </button>
                 </div>
             </div>
@@ -826,21 +1702,110 @@ export default function EditorDashboard() {
             </div>
 
             {activeTab === 'myfiles' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {myFiles.length === 0 ? (
-                        <div className="col-span-full bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
-                            <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                            <p className="text-gray-500 mb-4">You haven't created any files yet</p>
-                            <button
-                                onClick={() => setIsCreating(true)}
-                                className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
+                <div className="space-y-4">
+                    {/* Breadcrumb Navigation */}
+                    <div className="flex items-center gap-2 text-sm">
+                        <button
+                            onClick={() => handleNavigateToBreadcrumb(-1)}
+                            className={`flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 transition ${currentFolder === null ? 'text-purple-600 font-medium' : 'text-gray-600'}`}
+                        >
+                            <Folder className="w-4 h-4" />
+                            Root
+                        </button>
+                        {folderPath.map((folder, index) => (
+                            <div key={folder._id} className="flex items-center gap-2">
+                                <ChevronRight className="w-4 h-4 text-gray-400" />
+                                <button
+                                    onClick={() => handleNavigateToBreadcrumb(index)}
+                                    className={`px-2 py-1 rounded hover:bg-gray-100 transition ${index === folderPath.length - 1 ? 'text-purple-600 font-medium' : 'text-gray-600'}`}
+                                >
+                                    {folder.name}
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Back button when inside a folder */}
+                    {currentFolder && (
+                        <button
+                            onClick={handleNavigateUp}
+                            className="flex items-center gap-2 text-gray-600 hover:text-purple-600 transition"
+                        >
+                            <ArrowLeft className="w-4 h-4" />
+                            Back
+                        </button>
+                    )}
+
+                    {/* Folders and Files Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {/* Render Folders */}
+                        {getCurrentFolderContents().folders.map((folder) => (
+                            <div
+                                key={folder._id}
+                                className="bg-white rounded-xl shadow-sm border border-blue-200 p-4 hover:shadow-md transition cursor-pointer relative"
                             >
-                                <Plus className="w-4 h-4 mr-2" />
-                                Create Your First File
-                            </button>
-                        </div>
-                    ) : (
-                        myFiles.map((file) => (
+                                {/* GitHub indicator */}
+                                {folder.githubSource?.repo && (
+                                    <div className="absolute top-2 right-12 p-1 bg-gray-100 rounded-md" title={`From GitHub: ${folder.githubSource.owner}/${folder.githubSource.repo}`}>
+                                        <Github className="w-3 h-3 text-gray-600" />
+                                    </div>
+                                )}
+                                <div className="flex items-start justify-between mb-3">
+                                    <button
+                                        onClick={() => handleNavigateToFolder(folder)}
+                                        className="flex items-center gap-3 flex-1 text-left"
+                                    >
+                                        <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                                            <Folder className="w-5 h-5 text-blue-600" />
+                                        </div>
+                                        <div>
+                                            <h3 className="font-medium text-gray-900">{folder.name}</h3>
+                                            <p className="text-xs text-gray-500">Folder</p>
+                                        </div>
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteFolder(folder);
+                                        }}
+                                        className="p-1.5 hover:bg-red-100 rounded-lg transition"
+                                        title="Delete folder"
+                                    >
+                                        <Trash2 className="w-4 h-4 text-red-500" />
+                                    </button>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => handleNavigateToFolder(folder)}
+                                        className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-1"
+                                    >
+                                        <FolderOpen className="w-4 h-4" />
+                                        Open Folder
+                                    </button>
+                                    {folder.githubSource?.repo && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleSyncFolderFromGithub(folder._id);
+                                            }}
+                                            disabled={syncingFolder === folder._id}
+                                            className="px-3 py-2 text-sm bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition flex items-center justify-center gap-1 disabled:opacity-50"
+                                            title="Sync all files from GitHub"
+                                        >
+                                            {syncingFolder === folder._id ? (
+                                                <Loader2 className="w-4 h-4 animate-spin" />
+                                            ) : (
+                                                <RefreshCw className="w-4 h-4" />
+                                            )}
+                                            Sync
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+
+                        {/* Render Files */}
+                        {getCurrentFolderContents().files.map((file) => (
                             <div
                                 key={file._id}
                                 className="bg-white rounded-xl shadow-sm border border-purple-200 p-4 hover:shadow-md transition"
@@ -872,10 +1837,42 @@ export default function EditorDashboard() {
                                         <Edit className="w-4 h-4" />
                                         Edit & Save
                                     </button>
+                                    <button
+                                        onClick={() => handleDeleteFileFromList(file)}
+                                        className="px-3 py-2 text-sm bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition flex items-center justify-center gap-1"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
                                 </div>
                             </div>
-                        ))
-                    )}
+                        ))}
+
+                        {/* Empty State */}
+                        {getCurrentFolderContents().folders.length === 0 && getCurrentFolderContents().files.length === 0 && (
+                            <div className="col-span-full bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
+                                <Folder className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                                <p className="text-gray-500 mb-4">
+                                    {currentFolder ? 'This folder is empty' : 'You haven\'t created any files or folders yet'}
+                                </p>
+                                <div className="flex justify-center gap-3">
+                                    <button
+                                        onClick={() => setIsCreatingFolder(true)}
+                                        className="inline-flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                                    >
+                                        <FolderPlus className="w-4 h-4 mr-2" />
+                                        Create Folder
+                                    </button>
+                                    <button
+                                        onClick={() => setIsCreating(true)}
+                                        className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
+                                    >
+                                        <Plus className="w-4 h-4 mr-2" />
+                                        Create File
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             ) : activeTab === 'files' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -982,7 +1979,15 @@ export default function EditorDashboard() {
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[80vh] overflow-hidden">
                         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-                            <h2 className="font-semibold text-gray-900">{selectedFile.name}</h2>
+                            <div className="flex items-center gap-2">
+                                <h2 className="font-semibold text-gray-900">{selectedFile.name}</h2>
+                                {selectedFile.githubSource?.downloadUrl && (
+                                    <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                                        <Github className="w-3 h-3" />
+                                        GitHub
+                                    </span>
+                                )}
+                            </div>
                             <button
                                 onClick={() => setSelectedFile(null)}
                                 className="p-2 hover:bg-gray-100 rounded-lg transition"
@@ -1000,6 +2005,25 @@ export default function EditorDashboard() {
                             >
                                 Close
                             </button>
+                            {selectedFile.githubSource?.downloadUrl && myFiles.some(f => f._id === selectedFile._id) && (
+                                <button
+                                    onClick={() => handleSyncFromGithub(selectedFile._id)}
+                                    disabled={syncingFile === selectedFile._id}
+                                    className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition flex items-center gap-2 disabled:opacity-50"
+                                >
+                                    {syncingFile === selectedFile._id ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Syncing...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <RefreshCw className="w-4 h-4" />
+                                            Sync from GitHub
+                                        </>
+                                    )}
+                                </button>
+                            )}
                             <button
                                 onClick={() => handleStartEdit(selectedFile, myFiles.some(f => f._id === selectedFile._id))}
                                 className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition flex items-center gap-2"

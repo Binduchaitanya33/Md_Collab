@@ -7,6 +7,8 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import authRoutes from './routes/auth.js';
 import fileRoutes from './routes/files.js';
+import folderRoutes from './routes/folders.js';
+import githubRoutes from './routes/github.js';
 import editRoutes from './routes/edits.js';
 import userRoutes from './routes/users.js';
 import notificationRoutes from './routes/notifications.js';
@@ -104,6 +106,8 @@ mongoose.connect(process.env.MONGODB_URI)
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/files', fileRoutes);
+app.use('/api/folders', folderRoutes);
+app.use('/api/github', githubRoutes);
 app.use('/api/edits', editRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/notifications', notificationRoutes);
@@ -122,6 +126,7 @@ app.get('/', (req, res) => {
             health: '/api/health',
             auth: '/api/auth',
             files: '/api/files',
+            folders: '/api/folders',
             edits: '/api/edits',
             users: '/api/users',
             notifications: '/api/notifications'
