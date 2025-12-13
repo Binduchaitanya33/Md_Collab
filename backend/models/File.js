@@ -15,10 +15,27 @@ const fileSchema = new mongoose.Schema({
         ref: 'User',
         required: true
     },
+    folder: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Folder',
+        default: null // null means root level
+    },
     status: {
         type: String,
         enum: ['draft', 'approved'],
         default: 'approved'
+    },
+    published: {
+        type: Boolean,
+        default: true // Files are published by default
+    },
+    // GitHub source tracking for sync feature
+    githubSource: {
+        owner: { type: String, default: null },
+        repo: { type: String, default: null },
+        path: { type: String, default: null },
+        downloadUrl: { type: String, default: null },
+        lastSyncedAt: { type: Date, default: null }
     },
     versions: [{
         content: String,

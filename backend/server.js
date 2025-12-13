@@ -5,14 +5,22 @@ import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import authRoutes from './routes/auth.js';
 import fileRoutes from './routes/files.js';
+import folderRoutes from './routes/folders.js';
+import githubRoutes from './routes/github.js';
 import editRoutes from './routes/edits.js';
 import userRoutes from './routes/users.js';
 import notificationRoutes from './routes/notifications.js';
 import { setSocketIO } from './services/notificationService.js';
 
 dotenv.config();
+
+// ES module dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const httpServer = createServer(app);
@@ -104,6 +112,8 @@ mongoose.connect(process.env.MONGODB_URI)
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/files', fileRoutes);
+app.use('/api/folders', folderRoutes);
+app.use('/api/github', githubRoutes);
 app.use('/api/edits', editRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/notifications', notificationRoutes);
@@ -113,7 +123,7 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', message: 'MD Collab API is running' });
 });
 
-// Root route
+// Root route - API info
 app.get('/', (req, res) => {
     res.json({
         message: 'MD Collab API',
@@ -122,6 +132,7 @@ app.get('/', (req, res) => {
             health: '/api/health',
             auth: '/api/auth',
             files: '/api/files',
+            folders: '/api/folders',
             edits: '/api/edits',
             users: '/api/users',
             notifications: '/api/notifications'
