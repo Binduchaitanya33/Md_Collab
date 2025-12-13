@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import authRoutes from './routes/auth.js';
 import fileRoutes from './routes/files.js';
 import folderRoutes from './routes/folders.js';
@@ -15,6 +17,10 @@ import notificationRoutes from './routes/notifications.js';
 import { setSocketIO } from './services/notificationService.js';
 
 dotenv.config();
+
+// ES module dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const httpServer = createServer(app);
@@ -117,22 +123,33 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', message: 'MD Collab API is running' });
 });
 
-// Root route
-app.get('/', (req, res) => {
-    res.json({
-        message: 'MD Collab API',
-        status: 'running',
-        endpoints: {
-            health: '/api/health',
-            auth: '/api/auth',
-            files: '/api/files',
-            folders: '/api/folders',
-            edits: '/api/edits',
-            users: '/api/users',
-            notifications: '/api/notifications'
-        }
+// Serve static files from frontend build in production
+if (process.env.NODE_ENV === 'production') {
+    // Serve static files from the frontend dist folder
+    app.use(express.static(path.join(__dirname, '../frontend/dist')));
+
+    // Handle React routing - send all non-API requests to index.html
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
     });
-});
+} else {
+    // Root route for development
+    app.get('/', (req, res) => {
+        res.json({
+            message: 'MD Collab API',
+            status: 'running',
+            endpoints: {
+                health: '/api/health',
+                auth: '/api/auth',
+                files: '/api/files',
+                folders: '/api/folders',
+                edits: '/api/edits',
+                users: '/api/users',
+                notifications: '/api/notifications'
+            }
+        });
+    });
+}
 
 // Error handling middleware
 app.use((err, req, res, next) => {
